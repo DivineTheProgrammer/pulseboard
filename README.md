@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PulseBoard
 
-## Getting Started
+A live-updating dashboard for real, high-frequency market data, built to prove a system can absorb a fast, continuous stream without falling behind or losing data.
 
-First, run the development server:
+Dashboard: https://pulseboard-one-eta.vercel.app
+Code: https://github.com/DivineTheProgrammer/pulseboard
+Load test findings: https://github.com/DivineTheProgrammer/pulseboard/blob/main/LOAD_TEST_FINDINGS.md
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## The problem
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+A lot of portfolio dashboards fake "real time" with polling, fetching every few seconds and calling it live. That does not prove anything about handling actual load. Real high-frequency data, a live market feed, a busy sensor network, a large user base's activity stream, arrives continuously and unevenly, sometimes a trickle, sometimes a burst, and a system built for it needs to absorb that burst without falling behind or silently dropping events.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+I wanted to build the real version of that problem, not a polling loop pretending to be one.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## What it does
 
-## Learn More
+PulseBoard connects directly to Binance's live public WebSocket feed and streams real Bitcoin trade data, no mock data generator, no simulated ticks. Every trade gets pushed into a Redis queue, a separate worker process drains that queue in batches and writes the events to a Postgres database, and the dashboard itself receives live updates over a single open connection using Server-Sent Events, so the browser is never polling, it is just listening.
 
-To learn more about Next.js, take a look at the following resources:
+A replay mode lets you scrub back through recent history using the same real data that has already been written to the database, picking a time window and moving a slider through it.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Next.js and TypeScript for the dashboard, deployed on Vercel
+- Two separate, always-on Node.js processes, one connecting to Binance's WebSocket and pushing events into the queue, one draining that queue and writing to the database, deployed on Railway, since these are long-running processes that a serverless platform like Vercel cannot host
+- Upstash Redis for the queue, chosen specifically because its REST-based API works correctly in both serverless and traditional environments, rather than requiring a persistent connection
+- Supabase for the database, storing every price event with a timestamp, which is what makes the replay feature possible
+- The dashboard streams live updates to the browser over Server-Sent Events rather than polling, so new data appears the moment it is written, not on a fixed interval
 
-## Deploy on Vercel
+## The hardest decision
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The real architectural decision here was accepting that this project cannot be one deployment. A live WebSocket connection and a continuously polling worker are fundamentally different kinds of workload than a web dashboard, one needs to run forever, the other only needs to respond when asked. Rather than force everything onto Vercel and simulate the streaming parts with a workaround, I split the system properly, the dashboard on Vercel, the two long-running processes on Railway, all pointed at the same real Redis queue and Postgres database. That split is not a limitation, it is the actual correct shape of a system like this, and pretending otherwise would have meant building something that looked real but was not.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## What actually happened during the build
+
+The system was tested against genuine live market data for an extended period, thousands of real Bitcoin trades flowing through the full pipeline. At one point the queue depth climbed into the low thousands while the worker temporarily fell behind ingestion, then drained back to zero as the worker caught up, with no events lost, which is the actual proof that the queue is doing its job.
+
+A deliberate load test, pushing a controlled burst of synthetic events directly into the same queue, was cut short when the Upstash free tier's monthly request quota was fully exhausted by the cumulative traffic from a full day of real testing. Both the load test script and the live worker failed with the same clear, specific error rather than hanging or silently dropping data. The full account of that, and why the organic burst from real trading data is the more honest evidence of the system's throughput, is documented in LOAD_TEST_FINDINGS.md in this repository.
+
+## Status
+
+The dashboard, worker, and ingestion service are all deployed and live right now. The worker and ingestion service will resume processing real data automatically once the Upstash quota resets, no code changes required. Replay mode is unaffected by the quota and works right now against the real historical data already collected.
