@@ -9,18 +9,21 @@ const redis = new Redis({
 
 const SYMBOL = 'btcusdt'
 const QUEUE_KEY = 'pulseboard:queue'
+const FLUSH_INTERVAL_MS = 2000
 
 console.log('Connecting to Binance WebSocket for ' + SYMBOL + '...')
 
 const ws = new WebSocket('wss://stream.binance.com:9443/ws/' + SYMBOL + '@trade')
 
+let buffer = []
 let eventCount = 0
+let requestCount = 0
 
 ws.on('open', function () {
   console.log('Connected. Listening for live trades...')
 })
 
-ws.on('message', async function (data) {
+ws.on('message', function (data) {
   try {
     const trade = JSON.parse(data.toString())
 
@@ -31,16 +34,34 @@ ws.on('message', async function (data) {
       event_time: new Date(trade.T).toISOString(),
     }
 
-    await redis.lpush(QUEUE_KEY, JSON.stringify(event))
-
+    buffer.push(JSON.stringify(event))
     eventCount++
-    if (eventCount % 10 === 0) {
-      console.log('Queued ' + eventCount + ' events so far. Latest: ' + event.symbol + ' @ ' + event.price)
-    }
   } catch (err) {
     console.error('Error processing message:', err)
   }
 })
+
+async function flushBuffer() {
+  if (buffer.length === 0) return
+
+  const toSend = buffer
+  buffer = []
+
+  try {
+    const pipeline = redis.pipeline()
+    toSend.forEach(function (item) {
+      pipeline.lpush(QUEUE_KEY, item)
+    })
+    await pipeline.exec()
+
+    requestCount++
+    console.log('Flushed ' + toSend.length + ' events in 1 request. Total events: ' + eventCount + '. Total requests used: ' + requestCount)
+  } catch (err) {
+    console.error('Flush error:', err.message || err)
+  }
+}
+
+setInterval(flushBuffer, FLUSH_INTERVAL_MS)
 
 ws.on('error', function (err) {
   console.error('WebSocket error:', err)
