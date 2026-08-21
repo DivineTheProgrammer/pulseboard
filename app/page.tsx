@@ -15,7 +15,7 @@ export default function Home() {
   const [eventCount, setEventCount] = useState(0)
   const eventSourceRef = useRef<EventSource | null>(null)
 
-  const [replayWindow, setReplayWindow] = useState(120)
+  const [replayWindow, setReplayWindow] = useState(1440)
   const [replayLoading, setReplayLoading] = useState(false)
   const [replayEvents, setReplayEvents] = useState<any[]>([])
   const [scrubIndex, setScrubIndex] = useState(0)
@@ -112,6 +112,7 @@ export default function Home() {
               {connected ? 'Live' : 'Disconnected'}
             </div>
             <div style={{ color: '#888', fontSize: '0.85rem' }}>{eventCount} events received this session</div>
+            <div style={{ color: '#666', fontSize: '0.78rem' }}>Ingestion is paused while a free-tier usage quota resets. See Replay for real historical data.</div>
           </div>
         )}
 
@@ -119,10 +120,11 @@ export default function Home() {
           <div style={{ marginTop: '1.25rem' }}>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' as const }}>
               <span style={{ color: '#888', fontSize: '0.85rem' }}>Window:</span>
-              {[30, 60, 120, 360].map(function (mins) {
+              {[60, 360, 1440, 4320].map(function (mins) {
+                const label = mins < 60 ? mins + 'm' : (mins < 1440 ? (mins / 60) + 'h' : (mins / 1440) + 'd')
                 return (
                   <button key={mins} onClick={function () { setReplayWindow(mins) }} style={toggleButtonStyle(replayWindow === mins)}>
-                    {mins < 60 ? mins + 'm' : (mins / 60) + 'h'}
+                    {label}
                   </button>
                 )
               })}
@@ -158,7 +160,7 @@ export default function Home() {
         <div style={cardStyle}>
           {displayPoints.length === 0 ? (
             <p style={{ color: '#666', fontSize: '0.9rem' }}>
-              {mode === 'live' ? 'Waiting for the first live trade...' : (replayLoading ? 'Loading history...' : 'No historical data in this window.')}
+              {mode === 'live' ? 'Waiting for the first live trade...' : (replayLoading ? 'Loading history...' : 'No historical data in this window. Try a wider window above.')}
             </p>
           ) : (
             <ResponsiveContainer width="100%" height={350}>
